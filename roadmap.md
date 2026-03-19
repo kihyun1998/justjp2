@@ -624,14 +624,14 @@ Phase 0 (types, error, stream)
 
 | Phase | Step | 모듈 | 상태 |
 |-------|------|------|------|
-| 0 | 0.1 | types | ⬜ |
-| 0 | 0.2 | error | ⬜ |
-| 0 | 0.3 | stream | ⬜ |
-| 1 | 1.1 | bio | ⬜ |
-| 1 | 1.2 | tgt | ⬜ |
-| 2 | 2.1 | mqc_states | ⬜ |
-| 2 | 2.2 | mqc_enc | ⬜ |
-| 2 | 2.3 | mqc_dec | ⬜ |
+| 0 | 0.1 | types | ✅ |
+| 0 | 0.2 | error | ✅ |
+| 0 | 0.3 | stream | ✅ |
+| 1 | 1.1 | bio | ✅ |
+| 1 | 1.2 | tgt | ✅ |
+| 2 | 2.1 | mqc_states | ✅ |
+| 2 | 2.2 | mqc_enc | ✅ |
+| 2 | 2.3 | mqc_dec | ✅ |
 | 3 | 3.1 | t1_ctx | ⬜ |
 | 3 | 3.2 | t1 | ⬜ |
 | 4 | 4.1 | dwt_1d | ⬜ |
