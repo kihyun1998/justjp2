@@ -1,6 +1,8 @@
 pub mod bio;
 pub mod dwt;
 pub mod error;
+pub mod j2k;
+pub mod marker;
 pub mod mct;
 pub mod mqc;
 pub mod pi;
@@ -9,4 +11,5 @@ pub mod stream;
 pub mod t1;
 pub mod t2;
 pub mod tgt;
+pub mod tcd;
 pub mod types;
