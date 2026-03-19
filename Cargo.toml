@@ -2,6 +2,19 @@
 name = "justjp2"
 version = "0.1.0"
 edition = "2024"
+authors = ["kihyun1998"]
+description = "Pure Rust JPEG 2000 (JP2/J2K) encoder and decoder"
+license = "Apache-2.0"
+repository = "https://github.com/kihyun1998/justjp2"
+homepage = "https://github.com/kihyun1998/justjp2"
+documentation = "https://docs.rs/justjp2"
+readme = "README.md"
+keywords = ["jpeg2000", "jp2", "j2k", "image", "codec"]
+categories = ["multimedia::images", "encoding"]
+exclude = [
+    "vendor/",
+    "tests/fixtures/",
+]
 
 [dependencies]
 bitflags = "2"
