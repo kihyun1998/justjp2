@@ -1,6 +1,7 @@
 pub mod bio;
 pub mod dwt;
 pub mod error;
+pub mod htj2k;
 pub mod j2k;
 pub mod jp2;
 pub mod jp2_box;
@@ -9,6 +10,7 @@ pub mod mct;
 pub mod mqc;
 pub mod pi;
 pub mod quantize;
+pub mod simd;
 pub mod stream;
 pub mod t1;
 pub mod t2;
@@ -118,6 +120,76 @@ pub fn decode_with_reduce(data: &[u8], reduce: u32) -> Result<Image> {
     Ok(Image {
         width,
         height,
+        components,
+    })
+}
+
+/// Decode only a specific rectangular region of the image.
+///
+/// The region is specified in pixel coordinates: (x0, y0) is the top-left
+/// corner (inclusive) and (x1, y1) is the bottom-right corner (exclusive).
+///
+/// Returns an `Image` containing only the requested region.
+///
+/// # Errors
+/// Returns an error if the region is invalid (empty, or extends beyond the
+/// image bounds) or if the underlying decode fails.
+pub fn decode_region(data: &[u8], x0: u32, y0: u32, x1: u32, y1: u32) -> Result<Image> {
+    if x0 >= x1 || y0 >= y1 {
+        return Err(Jp2Error::InvalidData(
+            "decode_region: empty region (x0 >= x1 or y0 >= y1)".to_string(),
+        ));
+    }
+
+    // Decode the full image first, then crop.
+    let full = decode(data)?;
+
+    if x1 > full.width || y1 > full.height {
+        return Err(Jp2Error::InvalidData(format!(
+            "decode_region: region ({x0},{y0})-({x1},{y1}) exceeds image bounds {}x{}",
+            full.width, full.height
+        )));
+    }
+
+    let region_w = x1 - x0;
+    let region_h = y1 - y0;
+
+    let components = full
+        .components
+        .iter()
+        .map(|comp| {
+            // Handle sub-sampled components: adjust region coordinates by dx/dy
+            let cx0 = x0 / comp.dx;
+            let cy0 = y0 / comp.dy;
+            let cx1 = ((x1 + comp.dx - 1) / comp.dx).min(comp.width);
+            let cy1 = ((y1 + comp.dy - 1) / comp.dy).min(comp.height);
+            let cw = cx1 - cx0;
+            let ch = cy1 - cy0;
+
+            let mut region_data = vec![0i32; (cw * ch) as usize];
+            for y in 0..ch {
+                for x in 0..cw {
+                    let src_idx = ((cy0 + y) * comp.width + (cx0 + x)) as usize;
+                    let dst_idx = (y * cw + x) as usize;
+                    region_data[dst_idx] = comp.data[src_idx];
+                }
+            }
+
+            Component {
+                data: region_data,
+                width: cw,
+                height: ch,
+                precision: comp.precision,
+                signed: comp.signed,
+                dx: comp.dx,
+                dy: comp.dy,
+            }
+        })
+        .collect();
+
+    Ok(Image {
+        width: region_w,
+        height: region_h,
         components,
     })
 }

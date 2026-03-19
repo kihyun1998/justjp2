@@ -3,6 +3,8 @@
 /// Wraps TCD (Tile Coder/Decoder) with J2K marker segment framing.
 /// Supports multi-tile images and reduced resolution decoding.
 
+use rayon::prelude::*;
+
 use crate::error::{Jp2Error, Result};
 use crate::marker::*;
 use crate::stream::{SliceReader, VecWriter};
@@ -76,19 +78,25 @@ pub fn j2k_encode(
     // 4. QCD
     write_qcd(&mut writer, &qcd);
 
-    // 5. Encode and write each tile
-    let mut tile_index: u16 = 0;
+    // 5. Collect tile descriptions, encode in parallel, then write sequentially
+    let mut tile_descs: Vec<(u32, u32, u32, u32)> = Vec::new();
     for ty in 0..num_tiles_y {
         for tx in 0..num_tiles_x {
-            // Compute tile bounds
             let t_x0 = (tile_x_offset + tx * tile_width).max(x_offset);
             let t_y0 = (tile_y_offset + ty * tile_height).max(y_offset);
             let t_x1 = (tile_x_offset + (tx + 1) * tile_width).min(width);
             let t_y1 = (tile_y_offset + (ty + 1) * tile_height).min(height);
+            tile_descs.push((t_x0, t_y0, t_x1, t_y1));
+        }
+    }
+
+    // Encode all tiles in parallel using rayon
+    let encoded_tiles: std::result::Result<Vec<EncodedTile>, Jp2Error> = tile_descs
+        .par_iter()
+        .map(|&(t_x0, t_y0, t_x1, t_y1)| {
             let t_w = t_x1 - t_x0;
             let t_h = t_y1 - t_y0;
 
-            // Extract tile sub-region from each component
             let mut tile_comps = Vec::with_capacity(num_comps);
             let mut tile_comp_info = Vec::with_capacity(num_comps);
             for ci in 0..num_comps {
@@ -118,30 +126,27 @@ pub fn j2k_encode(
                 width: t_w,
                 height: t_h,
             };
-            let encoded_tile = tcd::encode_tile(&tile_data, &tile_comp_info, params)?;
+            tcd::encode_tile(&tile_data, &tile_comp_info, params)
+        })
+        .collect();
 
-            // Write SOT + SOD + tile data
-            let tile_part_len = 2 + 2 + 8 + 2 + encoded_tile.data.len() as u32;
+    let encoded_tiles = encoded_tiles?;
+    assert_eq!(encoded_tiles.len(), total_tiles as usize);
 
-            let sot = SotMarker {
-                tile_index,
-                tile_part_len,
-                tile_part_no: 0,
-                num_tile_parts: 1,
-            };
-            write_sot(&mut writer, &sot);
+    // Write tiles sequentially to maintain correct ordering
+    for (tile_index, encoded_tile) in encoded_tiles.iter().enumerate() {
+        let tile_part_len = 2 + 2 + 8 + 2 + encoded_tile.data.len() as u32;
 
-            // SOD
-            writer.write_u16_be(SOD);
-
-            // Tile data
-            writer.write_bytes(&encoded_tile.data);
-
-            tile_index += 1;
-        }
+        let sot = SotMarker {
+            tile_index: tile_index as u16,
+            tile_part_len,
+            tile_part_no: 0,
+            num_tile_parts: 1,
+        };
+        write_sot(&mut writer, &sot);
+        writer.write_u16_be(SOD);
+        writer.write_bytes(&encoded_tile.data);
     }
-
-    assert_eq!(tile_index as u32, total_tiles);
 
     // 6. EOC
     writer.write_u16_be(EOC);
@@ -198,14 +203,22 @@ pub fn j2k_encode_tiled(
     // 4. QCD
     write_qcd(&mut writer, &qcd);
 
-    // 5. Encode and write each tile
-    let mut tile_index: u16 = 0;
+    // 5. Collect tile descriptions, encode in parallel, then write sequentially
+    let mut tile_descs: Vec<(u32, u32, u32, u32)> = Vec::new();
     for ty in 0..num_tiles_y {
         for tx in 0..num_tiles_x {
             let t_x0 = (siz.tile_x_offset + tx * tile_width).max(siz.x_offset);
             let t_y0 = (siz.tile_y_offset + ty * tile_height).max(siz.y_offset);
             let t_x1 = (siz.tile_x_offset + (tx + 1) * tile_width).min(width);
             let t_y1 = (siz.tile_y_offset + (ty + 1) * tile_height).min(height);
+            tile_descs.push((t_x0, t_y0, t_x1, t_y1));
+        }
+    }
+
+    // Encode all tiles in parallel using rayon
+    let encoded_tiles: std::result::Result<Vec<EncodedTile>, Jp2Error> = tile_descs
+        .par_iter()
+        .map(|&(t_x0, t_y0, t_x1, t_y1)| {
             let t_w = t_x1 - t_x0;
             let t_h = t_y1 - t_y0;
 
@@ -238,22 +251,25 @@ pub fn j2k_encode_tiled(
                 width: t_w,
                 height: t_h,
             };
-            let encoded_tile = tcd::encode_tile(&tile_data, &tile_comp_info, params)?;
+            tcd::encode_tile(&tile_data, &tile_comp_info, params)
+        })
+        .collect();
 
-            let tile_part_len = 2 + 2 + 8 + 2 + encoded_tile.data.len() as u32;
+    let encoded_tiles = encoded_tiles?;
 
-            let sot = SotMarker {
-                tile_index,
-                tile_part_len,
-                tile_part_no: 0,
-                num_tile_parts: 1,
-            };
-            write_sot(&mut writer, &sot);
-            writer.write_u16_be(SOD);
-            writer.write_bytes(&encoded_tile.data);
+    // Write tiles sequentially to maintain correct ordering
+    for (tile_index, encoded_tile) in encoded_tiles.iter().enumerate() {
+        let tile_part_len = 2 + 2 + 8 + 2 + encoded_tile.data.len() as u32;
 
-            tile_index += 1;
-        }
+        let sot = SotMarker {
+            tile_index: tile_index as u16,
+            tile_part_len,
+            tile_part_no: 0,
+            num_tile_parts: 1,
+        };
+        write_sot(&mut writer, &sot);
+        writer.write_u16_be(SOD);
+        writer.write_bytes(&encoded_tile.data);
     }
 
     // 6. EOC
