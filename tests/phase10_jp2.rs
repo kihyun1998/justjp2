@@ -26,6 +26,8 @@ fn make_grayscale_8x8() -> (Vec<Vec<i32>>, Vec<TcdComponent>, TcdParams) {
         reversible: true,
         num_layers: 1,
         use_mct: false,
+        reduce: 0,
+        max_bytes: None,
     };
     (vec![pixels], comp_info, params)
 }
@@ -48,6 +50,8 @@ fn make_rgb_8x8() -> (Vec<Vec<i32>>, Vec<TcdComponent>, TcdParams) {
         reversible: true,
         num_layers: 1,
         use_mct: true,
+        reduce: 0,
+        max_bytes: None,
     };
     (vec![r, g, b], comp_info, params)
 }
@@ -347,4 +351,78 @@ fn color_space_grayscale() {
             reader.skip(content_len).unwrap();
         }
     }
+}
+
+#[test]
+fn read_colr_box_icc() {
+    // Write a COLR box with method=2 (ICC profile)
+    let fake_icc = vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
+    let mut writer = VecWriter::new();
+    let colr = ColrBox {
+        method: 2,
+        precedence: 0,
+        approx: 0,
+        enum_cs: None,
+        icc_profile: Some(fake_icc.clone()),
+    };
+    let payload_len = 3 + fake_icc.len() as u64; // method(1) + prec(1) + approx(1) + icc
+    write_box_header(&mut writer, JP2_COLR, payload_len);
+    write_colr(&mut writer, &colr);
+    let data = writer.into_vec();
+
+    // Read it back
+    let mut reader = SliceReader::new(&data);
+    let hdr = read_box_header(&mut reader).unwrap();
+    assert_eq!(hdr.box_type, JP2_COLR);
+    let content_len = hdr.length as usize - hdr.header_size as usize;
+    let parsed = read_colr(&mut reader, content_len).unwrap();
+    assert_eq!(parsed.method, 2);
+    assert!(parsed.enum_cs.is_none());
+    assert_eq!(parsed.icc_profile.as_ref().unwrap(), &fake_icc);
+}
+
+#[test]
+fn extended_length_box() {
+    // Write a box with extended length header (16 bytes)
+    let mut writer = VecWriter::new();
+    let payload = vec![0xABu8; 100];
+    write_box_header_xl(&mut writer, JP2_JP2C, payload.len() as u64);
+    writer.write_bytes(&payload);
+    let data = writer.into_vec();
+
+    // Read it back
+    let mut reader = SliceReader::new(&data);
+    let hdr = read_box_header(&mut reader).unwrap();
+    assert_eq!(hdr.box_type, JP2_JP2C);
+    assert_eq!(hdr.header_size, 16); // extended length uses 16-byte header
+    let content_len = hdr.length as usize - 16;
+    assert_eq!(content_len, 100);
+    let body = reader.read_bytes(content_len).unwrap();
+    assert_eq!(body, &payload[..]);
+}
+
+#[test]
+fn icc_profile_passthrough() {
+    // Test ICC profile COLR box roundtrip.
+    let fake_icc = vec![0x10; 256]; // 256-byte fake ICC profile
+    let mut writer = VecWriter::new();
+    let colr_in = ColrBox {
+        method: 2,
+        precedence: 0,
+        approx: 0,
+        enum_cs: None,
+        icc_profile: Some(fake_icc.clone()),
+    };
+    let payload_len = 3 + fake_icc.len() as u64;
+    write_box_header(&mut writer, JP2_COLR, payload_len);
+    write_colr(&mut writer, &colr_in);
+    let data = writer.into_vec();
+
+    let mut reader = SliceReader::new(&data);
+    let hdr = read_box_header(&mut reader).unwrap();
+    let content_len = hdr.length as usize - hdr.header_size as usize;
+    let colr_out = read_colr(&mut reader, content_len).unwrap();
+
+    assert_eq!(colr_out.method, 2);
+    assert_eq!(colr_out.icc_profile.unwrap(), fake_icc);
 }

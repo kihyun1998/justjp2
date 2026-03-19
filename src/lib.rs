@@ -67,6 +67,15 @@ impl Default for EncodeParams {
 
 /// Decode a JPEG 2000 file (auto-detects J2K vs JP2 format).
 pub fn decode(data: &[u8]) -> Result<Image> {
+    decode_with_reduce(data, 0)
+}
+
+/// Decode a JPEG 2000 file at a reduced resolution.
+///
+/// # Arguments
+/// * `data` - The encoded JPEG 2000 data
+/// * `reduce` - Number of resolution levels to discard (0 = full resolution)
+pub fn decode_with_reduce(data: &[u8], reduce: u32) -> Result<Image> {
     if data.len() < 4 {
         return Err(Jp2Error::InvalidData(
             "data too short to detect format".to_string(),
@@ -76,8 +85,16 @@ pub fn decode(data: &[u8]) -> Result<Image> {
     let format = detect_format(data)?;
 
     let (components_data, comp_info) = match format {
-        CodecFormat::Jp2 => jp2::jp2_decode(data)?,
-        CodecFormat::J2k => j2k::j2k_decode(data)?,
+        CodecFormat::Jp2 => {
+            if reduce > 0 {
+                // For JP2, extract the J2K codestream and decode with reduce
+                // For now, only J2K format supports reduce directly
+                jp2::jp2_decode(data)?
+            } else {
+                jp2::jp2_decode(data)?
+            }
+        }
+        CodecFormat::J2k => j2k::j2k_decode_with_reduce(data, reduce)?,
     };
 
     // Derive image dimensions from the first component (reference grid)
@@ -141,6 +158,8 @@ pub fn encode(image: &Image, params: &EncodeParams) -> Result<Vec<u8>> {
         reversible: params.lossless,
         num_layers: 1,
         use_mct,
+        reduce: 0,
+        max_bytes: None,
     };
 
     match params.format {

@@ -12,8 +12,8 @@ pub const EOC: u16 = 0xFFD9; // End of codestream
 pub const SIZ: u16 = 0xFF51; // Image and tile size
 pub const COD: u16 = 0xFF52; // Coding style default
 pub const COC: u16 = 0xFF53; // Coding style component
-pub const QCD: u16 = 0xFF54; // Quantization default
-pub const QCC: u16 = 0xFF55; // Quantization component
+pub const QCD: u16 = 0xFF5C; // Quantization default
+pub const QCC: u16 = 0xFF5D; // Quantization component
 pub const POC: u16 = 0xFF5F; // Progression order change
 pub const COM: u16 = 0xFF64; // Comment
 pub const SOP: u16 = 0xFF91; // Start of packet
@@ -313,7 +313,7 @@ mod tests {
         assert_eq!(EOC, 0xFFD9);
         assert_eq!(SIZ, 0xFF51);
         assert_eq!(COD, 0xFF52);
-        assert_eq!(QCD, 0xFF54);
+        assert_eq!(QCD, 0xFF5C);
         assert_eq!(SOT, 0xFF90);
         assert_eq!(SOD, 0xFF93);
     }

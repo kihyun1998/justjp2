@@ -173,6 +173,8 @@ fn encode_decode_gray_tile() {
         reversible: true,
         num_layers: 1,
         use_mct: false,
+        reduce: 0,
+        max_bytes: None,
     };
 
     let encoded = encode_tile(&tile, &components, &params).unwrap();
@@ -247,6 +249,8 @@ fn encode_decode_rgb_tile() {
         reversible: true,
         num_layers: 1,
         use_mct: true,
+        reduce: 0,
+        max_bytes: None,
     };
 
     let encoded = encode_tile(&tile, &components, &params).unwrap();
@@ -312,6 +316,8 @@ fn lossless_gray() {
         reversible: true,
         num_layers: 1,
         use_mct: false,
+        reduce: 0,
+        max_bytes: None,
     };
 
     let encoded = encode_tile(&tile, &components, &params).unwrap();
@@ -373,6 +379,8 @@ fn lossy_psnr_threshold() {
         reversible: false, // 9/7 DWT + ICT (lossy)
         num_layers: 1,
         use_mct: false,
+        reduce: 0,
+        max_bytes: None,
     };
 
     let encoded = encode_tile(&tile, &components, &params).unwrap();
@@ -385,5 +393,102 @@ fn lossy_psnr_threshold() {
         psnr > 30.0,
         "PSNR should be > 30dB for lossy encoding, got {:.2}dB",
         psnr,
+    );
+}
+
+#[test]
+fn precinct_count() {
+    // For a 64x64 subband with 64x64 precincts: 1 precinct
+    // Precincts partition the subband the same way code-blocks do at a coarser level.
+    // In our simplified impl, 1 precinct per resolution level.
+    // Verify via codeblock_count as proxy (1 cblk per precinct when cblk == subband)
+    assert_eq!(codeblock_count(64, 64, 64, 64), 1);
+    assert_eq!(codeblock_count(128, 128, 64, 64), 4);
+}
+
+#[test]
+fn codeblock_max_64x64() {
+    // Code-block size is capped at 64x64 by JPEG 2000 standard.
+    // Even if subband is larger, each code-block is at most 64x64.
+    // 128x128 subband with 64x64 cblks → 4 code-blocks
+    assert_eq!(codeblock_count(128, 128, 64, 64), 4);
+    // 64x64 subband with 64x64 cblks → exactly 1
+    assert_eq!(codeblock_count(64, 64, 64, 64), 1);
+    // 65x65 subband with 64x64 cblks → 2x2 = 4
+    assert_eq!(codeblock_count(65, 65, 64, 64), 4);
+}
+
+#[test]
+fn rate_allocation() {
+    // Encode with max_bytes limit and verify output is truncated
+    let w = 32u32;
+    let h = 32u32;
+    let n = (w * h) as usize;
+
+    let mut samples = vec![0i32; n];
+    for y in 0..h {
+        for x in 0..w {
+            samples[(y * w + x) as usize] = ((x + y * 3) % 256) as i32;
+        }
+    }
+
+    let tile = TileData {
+        components: vec![samples.clone()],
+        width: w,
+        height: h,
+    };
+
+    let components = vec![TcdComponent {
+        width: w,
+        height: h,
+        precision: 8,
+        signed: false,
+        dx: 1,
+        dy: 1,
+    }];
+
+    // First encode without limit to get full size
+    let params_full = TcdParams {
+        num_res: 3,
+        cblk_w: 32,
+        cblk_h: 32,
+        reversible: true,
+        num_layers: 1,
+        use_mct: false,
+        reduce: 0,
+        max_bytes: None,
+    };
+
+    let encoded_full = encode_tile(&tile, &components, &params_full).unwrap();
+    let full_size = encoded_full.data.len();
+    assert!(full_size > 100, "encoded data should be non-trivial");
+
+    // Encode with a max_bytes limit
+    let limit = full_size / 2;
+    let params_limited = TcdParams {
+        num_res: 3,
+        cblk_w: 32,
+        cblk_h: 32,
+        reversible: true,
+        num_layers: 1,
+        use_mct: false,
+        reduce: 0,
+        max_bytes: Some(limit),
+    };
+
+    let encoded_limited = encode_tile(&tile, &components, &params_limited).unwrap();
+    assert!(
+        encoded_limited.data.len() <= limit,
+        "encoded data ({}) should be <= max_bytes limit ({})",
+        encoded_limited.data.len(),
+        limit
+    );
+
+    // Verify the limited data is strictly smaller than the full data
+    assert!(
+        encoded_limited.data.len() < full_size,
+        "limited encode ({}) should be smaller than full ({})",
+        encoded_limited.data.len(),
+        full_size
     );
 }

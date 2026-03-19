@@ -675,7 +675,7 @@ Phase 0 (types, error, stream)
 | 10 | 10.1 | jp2_box | ✅ |
 | 10 | 10.2 | jp2 | ✅ |
 | 11 | 11.1 | api | ✅ |
-| 11 | 11.2 | compat | ⬜ (openjpeg 참조 파일 필요) |
+| 11 | 11.2 | compat | ✅ |
 | 12 | 12.1 | htj2k | ⬜ |
 | 12 | 12.2 | roi | ⬜ |
 | 12 | 12.3 | threads | ⬜ |

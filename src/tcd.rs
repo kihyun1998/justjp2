@@ -29,6 +29,10 @@ pub struct TcdParams {
     pub reversible: bool,
     pub num_layers: u32,
     pub use_mct: bool,
+    /// Number of resolution levels to skip during decoding (0 = full resolution).
+    pub reduce: u32,
+    /// Maximum encoded tile data size in bytes (None = no limit).
+    pub max_bytes: Option<usize>,
 }
 
 impl Default for TcdParams {
@@ -40,6 +44,8 @@ impl Default for TcdParams {
             reversible: true,
             num_layers: 1,
             use_mct: false,
+            reduce: 0,
+            max_bytes: None,
         }
     }
 }
@@ -401,6 +407,13 @@ pub fn encode_tile(
     // Write all compressed data
     output.extend_from_slice(&all_cblk_data);
 
+    // 6. Rate allocation: truncate tile data if max_bytes is set
+    if let Some(max_bytes) = params.max_bytes {
+        if output.len() > max_bytes {
+            output.truncate(max_bytes);
+        }
+    }
+
     Ok(EncodedTile {
         data: output,
         numbps: max_numbps_per_comp,
@@ -427,6 +440,7 @@ pub fn decode_tile(
     } else {
         0
     };
+    let reduce = params.reduce.min(num_decomp);
 
     let data = &encoded.data;
     if data.len() < 4 {
@@ -540,20 +554,46 @@ pub fn decode_tile(
         );
     }
 
-    // 2. Inverse DWT per component
+    // 2. Inverse DWT per component (only num_decomp - reduce levels)
+    let effective_decomp = num_decomp - reduce;
     for ci in 0..num_comps {
         let cw = components[ci].width as usize;
         let ch = components[ci].height as usize;
-        if num_decomp > 0 {
+        if effective_decomp > 0 {
             if params.reversible {
-                dwt::dwt53_inverse_2d(&mut comp_bufs[ci], cw, ch, num_decomp as usize);
+                dwt::dwt53_inverse_2d(&mut comp_bufs[ci], cw, ch, effective_decomp as usize);
             } else {
                 let mut fdata: Vec<f64> = comp_bufs[ci].iter().map(|&v| v as f64).collect();
-                dwt::dwt97_inverse_2d(&mut fdata, cw, ch, num_decomp as usize);
+                dwt::dwt97_inverse_2d(&mut fdata, cw, ch, effective_decomp as usize);
                 for i in 0..comp_bufs[ci].len() {
                     comp_bufs[ci][i] = fdata[i].round() as i32;
                 }
             }
+        }
+    }
+
+    // Compute output dimensions after reduce
+    let (out_w, out_h) = if reduce > 0 {
+        // Output is the LL subband at the reduced resolution
+        let rw = resolution_size(width, height, reduce);
+        rw
+    } else {
+        (width, height)
+    };
+
+    // If reduce > 0, extract only the LL region from the full buffer
+    if reduce > 0 {
+        for ci in 0..num_comps {
+            let cw = components[ci].width as usize;
+            let rw = out_w as usize;
+            let rh = out_h as usize;
+            let mut reduced = vec![0i32; rw * rh];
+            for y in 0..rh {
+                for x in 0..rw {
+                    reduced[y * rw + x] = comp_bufs[ci][y * cw + x];
+                }
+            }
+            comp_bufs[ci] = reduced;
         }
     }
 
@@ -589,8 +629,8 @@ pub fn decode_tile(
 
     Ok(TileData {
         components: comp_bufs,
-        width,
-        height,
+        width: out_w,
+        height: out_h,
     })
 }
 

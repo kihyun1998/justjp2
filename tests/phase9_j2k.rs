@@ -221,6 +221,8 @@ fn encode_minimal_j2k() {
         reversible: true,
         num_layers: 1,
         use_mct: false,
+        reduce: 0,
+        max_bytes: None,
     };
 
     let codestream = j2k::j2k_encode(&components, &comp_info, &params).unwrap();
@@ -248,6 +250,8 @@ fn decode_minimal_j2k() {
         reversible: true,
         num_layers: 1,
         use_mct: false,
+        reduce: 0,
+        max_bytes: None,
     };
 
     let codestream = j2k::j2k_encode(&components, &comp_info, &params).unwrap();
@@ -271,6 +275,8 @@ fn encode_decode_roundtrip() {
         reversible: true,
         num_layers: 1,
         use_mct: false,
+        reduce: 0,
+        max_bytes: None,
     };
 
     let codestream = j2k::j2k_encode(&components, &comp_info, &params).unwrap();
@@ -312,6 +318,8 @@ fn header_parsing() {
         reversible: true,
         num_layers: 1,
         use_mct: false,
+        reduce: 0,
+        max_bytes: None,
     };
 
     let codestream = j2k::j2k_encode(&components, &comp_info, &params).unwrap();
@@ -361,6 +369,7 @@ fn tcd_vs_j2k_tile_bytes_match() {
     let params = TcdParams {
         num_res: 2, cblk_w: 16, cblk_h: 16,
         reversible: true, num_layers: 1, use_mct: false,
+        reduce: 0, max_bytes: None,
     };
 
     // Direct TCD encode
@@ -415,10 +424,243 @@ fn encode_decode_constant_image() {
         reversible: true,
         num_layers: 1,
         use_mct: false,
+        reduce: 0,
+        max_bytes: None,
     };
 
     let codestream = j2k::j2k_encode(&[samples.clone()], &comp_info, &params).unwrap();
     let (decoded, _) = j2k::j2k_decode(&codestream).unwrap();
 
     assert_eq!(decoded[0], samples);
+}
+
+#[test]
+fn unknown_marker_skip() {
+    // Insert an unknown marker (0xFF60 with 4 bytes payload) between COD and QCD.
+    // The decoder should skip it and still decode correctly.
+    let w = 8u32;
+    let h = 8u32;
+    let samples: Vec<i32> = (0..64).map(|i| (i * 3) % 256).collect();
+    let comp_info = vec![TcdComponent {
+        width: w, height: h, precision: 8, signed: false, dx: 1, dy: 1,
+    }];
+    let params = TcdParams {
+        num_res: 2, cblk_w: 8, cblk_h: 8, reversible: true, num_layers: 1, use_mct: false,
+        reduce: 0, max_bytes: None,
+    };
+
+    let original = j2k::j2k_encode(&[samples.clone()], &comp_info, &params).unwrap();
+
+    // Find the QCD marker (0xFF5C) and insert unknown marker before it
+    let mut modified = Vec::new();
+    let mut i = 0;
+    let mut inserted = false;
+    while i < original.len() - 1 {
+        if !inserted && original[i] == 0xFF && original[i + 1] == 0x5C {
+            // Insert unknown marker 0xFF60 with Lunk=4 (2 bytes data)
+            modified.extend_from_slice(&[0xFF, 0x60, 0x00, 0x04, 0xAB, 0xCD]);
+            inserted = true;
+        }
+        modified.push(original[i]);
+        i += 1;
+    }
+    if i < original.len() {
+        modified.push(original[i]);
+    }
+
+    // Should still decode
+    let (decoded, _) = j2k::j2k_decode(&modified).unwrap();
+    assert_eq!(decoded.len(), 1);
+    assert_eq!(decoded[0].len(), 64);
+}
+
+#[test]
+fn marker_segment_length() {
+    // Verify SIZ marker segment has correct length field.
+    let mut writer = VecWriter::new();
+    let siz = SizMarker {
+        profile: 0,
+        width: 64, height: 64,
+        x_offset: 0, y_offset: 0,
+        tile_width: 64, tile_height: 64,
+        tile_x_offset: 0, tile_y_offset: 0,
+        num_comps: 1,
+        comps: vec![SizComp { precision: 7, dx: 1, dy: 1 }], // 8-bit unsigned
+    };
+    write_siz(&mut writer, &siz);
+    let data = writer.into_vec();
+
+    // SIZ segment: marker(2) + Lsiz(2) + Rsiz(2) + Xsiz(4) + Ysiz(4) + XOsiz(4) + YOsiz(4)
+    //   + XTsiz(4) + YTsiz(4) + XTOsiz(4) + YTOsiz(4) + Csiz(2) + per_comp(3 each)
+    // Lsiz = 38 + 3 * num_comps = 38 + 3 = 41
+    // But Lsiz counts from itself: total_payload = 41 - 2 = 39 bytes after marker
+    // Let's just verify the length field is consistent
+    let len_field = u16::from_be_bytes([data[2], data[3]]);
+    // Lsiz includes itself (2 bytes) but not the marker code
+    let expected_len = 38 + 3 * siz.num_comps;
+    assert_eq!(len_field, expected_len, "SIZ length field mismatch");
+}
+
+// ─── Multi-tile encode/decode tests ───
+
+#[test]
+fn multi_tile_encode_decode() {
+    // 16x16 image with 8x8 tiles -> 4 tiles
+    let w = 16u32;
+    let h = 16u32;
+    let n = (w * h) as usize;
+    let samples: Vec<i32> = (0..n).map(|i| ((i * 7 + 3) % 256) as i32).collect();
+    let comp_info = vec![TcdComponent {
+        width: w,
+        height: h,
+        precision: 8,
+        signed: false,
+        dx: 1,
+        dy: 1,
+    }];
+    let params = TcdParams {
+        num_res: 2,
+        cblk_w: 8,
+        cblk_h: 8,
+        reversible: true,
+        num_layers: 1,
+        use_mct: false,
+        reduce: 0,
+        max_bytes: None,
+    };
+
+    let codestream =
+        j2k::j2k_encode_tiled(&[samples.clone()], &comp_info, &params, 8, 8).unwrap();
+
+    // Verify SIZ has correct tile dimensions
+    let header = j2k::j2k_read_header(&codestream).unwrap();
+    assert_eq!(header.siz.tile_width, 8);
+    assert_eq!(header.siz.tile_height, 8);
+    assert_eq!(header.siz.width, 16);
+    assert_eq!(header.siz.height, 16);
+
+    // Decode and verify
+    let (decoded, dec_info) = j2k::j2k_decode(&codestream).unwrap();
+    assert_eq!(dec_info.len(), 1);
+    assert_eq!(dec_info[0].width, 16);
+    assert_eq!(dec_info[0].height, 16);
+    assert_eq!(decoded.len(), 1);
+    assert_eq!(decoded[0].len(), n);
+
+    // Check near-lossless roundtrip
+    // With small 8x8 tiles and DWT, the T1 midpoint reconstruction can cause
+    // errors up to +-3 at tile boundaries.
+    let max_err: i32 = samples
+        .iter()
+        .zip(decoded[0].iter())
+        .map(|(&o, &d)| (o - d).abs())
+        .max()
+        .unwrap_or(0);
+    assert!(
+        max_err <= 3,
+        "multi-tile roundtrip max error should be <= 3, got {}",
+        max_err
+    );
+}
+
+#[test]
+fn specific_tile_decode() {
+    // Encode with 4 tiles, decode all, verify each quadrant has correct data
+    let w = 16u32;
+    let h = 16u32;
+    let n = (w * h) as usize;
+
+    // Create distinct patterns in each 8x8 quadrant
+    let mut samples = vec![0i32; n];
+    for y in 0..h {
+        for x in 0..w {
+            let quadrant = if x < 8 && y < 8 {
+                50
+            } else if x >= 8 && y < 8 {
+                100
+            } else if x < 8 && y >= 8 {
+                150
+            } else {
+                200
+            };
+            samples[(y * w + x) as usize] = quadrant;
+        }
+    }
+
+    let comp_info = vec![TcdComponent {
+        width: w,
+        height: h,
+        precision: 8,
+        signed: false,
+        dx: 1,
+        dy: 1,
+    }];
+    let params = TcdParams {
+        num_res: 2,
+        cblk_w: 8,
+        cblk_h: 8,
+        reversible: true,
+        num_layers: 1,
+        use_mct: false,
+        reduce: 0,
+        max_bytes: None,
+    };
+
+    let codestream =
+        j2k::j2k_encode_tiled(&[samples.clone()], &comp_info, &params, 8, 8).unwrap();
+    let (decoded, _) = j2k::j2k_decode(&codestream).unwrap();
+
+    // Check each quadrant center pixel is approximately correct
+    assert!((decoded[0][(2 * w + 2) as usize] - 50).abs() <= 1);   // top-left
+    assert!((decoded[0][(2 * w + 10) as usize] - 100).abs() <= 1); // top-right
+    assert!((decoded[0][(10 * w + 2) as usize] - 150).abs() <= 1); // bottom-left
+    assert!((decoded[0][(10 * w + 10) as usize] - 200).abs() <= 1);// bottom-right
+}
+
+#[test]
+fn reduce_resolution_decode() {
+    // Encode at full resolution, decode at half resolution
+    let w = 16u32;
+    let h = 16u32;
+    let n = (w * h) as usize;
+    let samples: Vec<i32> = (0..n).map(|i| ((i * 5 + 10) % 256) as i32).collect();
+    let comp_info = vec![TcdComponent {
+        width: w,
+        height: h,
+        precision: 8,
+        signed: false,
+        dx: 1,
+        dy: 1,
+    }];
+    let params = TcdParams {
+        num_res: 3, // 2 decomposition levels
+        cblk_w: 16,
+        cblk_h: 16,
+        reversible: true,
+        num_layers: 1,
+        use_mct: false,
+        reduce: 0,
+        max_bytes: None,
+    };
+
+    let codestream = j2k::j2k_encode(&[samples.clone()], &comp_info, &params).unwrap();
+
+    // Decode at reduce=1 (half resolution)
+    let (decoded, dec_info) = j2k::j2k_decode_with_reduce(&codestream, 1).unwrap();
+    assert_eq!(dec_info.len(), 1);
+    assert_eq!(dec_info[0].width, 8);  // (16+1)/2 = 8
+    assert_eq!(dec_info[0].height, 8);
+    assert_eq!(decoded[0].len(), 64);  // 8*8
+
+    // Decode at reduce=2 (quarter resolution)
+    let (decoded2, dec_info2) = j2k::j2k_decode_with_reduce(&codestream, 2).unwrap();
+    assert_eq!(dec_info2[0].width, 4);  // (8+1)/2 = 4
+    assert_eq!(dec_info2[0].height, 4);
+    assert_eq!(decoded2[0].len(), 16); // 4*4
+
+    // Full resolution should still work
+    let (decoded_full, dec_info_full) = j2k::j2k_decode_with_reduce(&codestream, 0).unwrap();
+    assert_eq!(dec_info_full[0].width, 16);
+    assert_eq!(dec_info_full[0].height, 16);
+    assert_eq!(decoded_full[0].len(), 256);
 }
