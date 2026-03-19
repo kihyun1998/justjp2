@@ -241,16 +241,27 @@ EBCOT (T1)의 핵심. 컨텍스트 기반 이진 산술 코딩.
 
 **테스트**: `tests/phase3_t1.rs`
 ```rust
+// 컨텍스트 (Step 3.1)
+#[test] fn zc_context_no_neighbors()      // 이웃 없으면 ctx 0
+#[test] fn zc_context_hl_band()           // HL 밴드 컨텍스트
+#[test] fn zc_context_lh_band()           // LH 밴드 컨텍스트
+#[test] fn zc_context_hh_band()           // HH 밴드 컨텍스트
+#[test] fn sc_context_positive()          // 양수 부호 컨텍스트
+#[test] fn sc_context_negative()          // 음수 부호 컨텍스트
+#[test] fn mag_context_first_ref()        // 첫 리파인먼트
+#[test] fn mag_context_subsequent()       // 이후 리파인먼트
+// 인코드/디코드 왕복 (Step 3.2)
 #[test] fn encode_decode_zero_block()     // 전부 0인 블록
 #[test] fn encode_decode_constant_block() // 동일 값 블록
 #[test] fn encode_decode_gradient()       // 그라디언트 패턴
 #[test] fn encode_decode_random_4x4()     // 4x4 랜덤 데이터
 #[test] fn encode_decode_64x64()          // 최대 코드블록 크기
 #[test] fn encode_decode_signed()         // 음수 포함 데이터
-#[test] fn bypass_mode()                  // BYPASS 모드 활성
-#[test] fn reset_mode()                   // RESET 모드
-#[test] fn termall_mode()                 // TERMALL 모드
 #[test] fn multiple_passes_count()        // 패스 수 = 3*numbps - 2
+// 코드블록 스타일 모드
+#[test] fn bypass_mode()                  // BYPASS(LAZY) 모드 왕복
+#[test] fn reset_mode()                   // RESET 모드 왕복
+#[test] fn termall_mode()                 // TERMALL 모드 왕복
 ```
 
 ---
@@ -259,48 +270,48 @@ EBCOT (T1)의 핵심. 컨텍스트 기반 이진 산술 코딩.
 
 공간→주파수 도메인 변환. 5/3 (가역) 및 9/7 (비가역).
 
-### Step 4.1 — 1D 리프팅 (`dwt_1d.rs`)
+### Step 4.1 — 1D 리프팅
 
 ```
-- lift_5_3_encode_1d / decode_1d (가역, 정수)
-- lift_9_7_encode_1d / decode_1d (비가역, 실수)
-- interleave / deinterleave 헬퍼
+- dwt53_forward_1d / dwt53_inverse_1d (가역 5/3, 정수)
+- dwt97_forward_1d / dwt97_inverse_1d (비가역 9/7, 실수)
+- 경계 대칭 확장 (mirror), split/merge 내부 처리
 ```
 
-**테스트**: `tests/phase4_dwt_1d.rs`
+### Step 4.2 — 2D DWT
+
+```
+- dwt53_forward_2d / dwt53_inverse_2d — 가역
+- dwt97_forward_2d / dwt97_inverse_2d — 비가역
+- 행 → 열 순서로 1D 적용, 다중 해상도 레벨 (재귀 LL)
+```
+
+> 1D + 2D를 `dwt.rs` 하나에 통합 구현.
+
+**테스트**: `tests/phase4_dwt.rs`
 ```rust
-#[test] fn dwt53_encode_decode_4()        // 길이 4 신호 왕복
-#[test] fn dwt53_encode_decode_8()        // 길이 8 신호 왕복
-#[test] fn dwt53_encode_decode_odd()      // 홀수 길이 신호
-#[test] fn dwt53_single_sample()          // 길이 1 (패스스루)
+// 1D 5/3
+#[test] fn dwt53_encode_decode_4()        // 길이 4 왕복
+#[test] fn dwt53_encode_decode_8()        // 길이 8 왕복
+#[test] fn dwt53_encode_decode_odd()      // 홀수 길이
+#[test] fn dwt53_single_sample()          // 길이 1 패스스루
 #[test] fn dwt53_two_samples()            // 길이 2
-#[test] fn dwt97_encode_decode_8()        // 9/7 길이 8 왕복 (오차 허용)
-#[test] fn dwt97_encode_decode_odd()      // 9/7 홀수 길이
+#[test] fn dwt53_roundtrip_all_zeros()    // 전부 0
+#[test] fn dwt53_roundtrip_length_3()     // 길이 3
+#[test] fn dwt53_roundtrip_negative_values() // 음수 포함
+// 1D 9/7
+#[test] fn dwt97_encode_decode_8()        // 길이 8 왕복 (오차)
+#[test] fn dwt97_encode_decode_odd()      // 홀수 길이
 #[test] fn dwt97_precision()              // 오차 < 1e-6
-#[test] fn interleave_deinterleave()      // 인터리브 왕복
-```
-
-### Step 4.2 — 2D DWT (`dwt_2d.rs`)
-
-```
-- dwt_encode_2d(tile_data, width, height, levels) — 가역
-- dwt_decode_2d(tile_data, width, height, levels) — 가역
-- dwt_encode_2d_real / dwt_decode_2d_real — 비가역
-- 행 → 열 순서로 1D 적용
-- 다중 해상도 레벨 (재귀 LL 분할)
-```
-
-**테스트**: `tests/phase4_dwt_2d.rs`
-```rust
+// 2D
 #[test] fn dwt53_2d_4x4_roundtrip()       // 4x4 왕복
 #[test] fn dwt53_2d_8x8_roundtrip()       // 8x8 왕복
 #[test] fn dwt53_2d_non_square()          // 직사각형 (8x4)
 #[test] fn dwt53_2d_multi_level()         // 3레벨 분해/복원
 #[test] fn dwt53_2d_single_level()        // 1레벨만
-#[test] fn dwt97_2d_8x8_roundtrip()       // 9/7 왕복 (오차 허용)
+#[test] fn dwt53_2d_multi_level_non_power_of_two() // 비2멱 크기
+#[test] fn dwt97_2d_8x8_roundtrip()       // 9/7 2D 왕복
 #[test] fn dwt97_2d_multi_level()         // 9/7 다중 레벨
-#[test] fn dwt_norms()                    // getnorm 테이블 검증
-#[test] fn calc_explicit_stepsizes()      // 스텝사이즈 계산
 ```
 
 ---
@@ -312,21 +323,20 @@ EBCOT (T1)의 핵심. 컨텍스트 기반 이진 산술 코딩.
 ### Step 5.1 — MCT (`mct.rs`)
 
 ```
-- mct_encode(c0, c1, c2)    — 가역 (RCT): Y=floor((R+2G+B)/4), Cb=B-G, Cr=R-G
-- mct_decode(c0, c1, c2)    — 역변환
-- mct_encode_real / decode_real — 비가역 (ICT): YCbCr 행렬
-- mct_getnorm / getnorm_real
+- rct_forward / rct_inverse — 가역 (RCT): Y=floor((R+2G+B)/4), Cb=B-G, Cr=R-G
+- ict_forward / ict_inverse — 비가역 (ICT): YCbCr 행렬
 ```
+
+> DWT/MCT norm 테이블(getnorm)은 Phase 6(양자화)에서 구현.
 
 **테스트**: `tests/phase5_mct.rs`
 ```rust
-#[test] fn rct_encode_white()             // (255,255,255) → (255,0,0)
-#[test] fn rct_encode_red()               // (255,0,0) → (63,−255,255) 부호 확인
-#[test] fn rct_roundtrip()                // encode→decode 원본 복원
+#[test] fn rct_encode_white()             // (255,255,255)
+#[test] fn rct_encode_red()               // (255,0,0) 부호 확인
+#[test] fn rct_roundtrip()                // forward→inverse 원본 복원
 #[test] fn rct_roundtrip_random()         // 랜덤 데이터 왕복
 #[test] fn ict_roundtrip()                // 비가역 왕복 (오차 허용)
 #[test] fn ict_precision()                // 오차 < 0.5
-#[test] fn mct_norms()                    // norm 테이블 값 검증
 #[test] fn mct_1000_samples()             // 대량 데이터 왕복
 ```
 
@@ -344,6 +354,8 @@ DWT 계수를 양자화/역양자화한다.
 - dequantize_band(coeffs, stepsize, guard_bits) — 역방향
 - calc_stepsizes(tccp, prec) — DWT norm 기반 스텝사이즈 계산
 - QNTSTY_NOQNT (no quantization), QNTSTY_SIQNT (scalar implicit), QNTSTY_SEQNT (scalar explicit)
+- DWT norm 테이블: dwt_getnorm(level, orient), dwt_getnorm_real(level, orient)
+- MCT norm 테이블: mct_getnorm(compno), mct_getnorm_real(compno)
 ```
 
 **테스트**: `tests/phase6_quantize.rs`
@@ -354,6 +366,8 @@ DWT 계수를 양자화/역양자화한다.
 #[test] fn calc_stepsizes_5levels()       // 5레벨 스텝사이즈 개수 확인
 #[test] fn guard_bits_effect()            // guard bits에 따른 범위
 #[test] fn zero_coefficient()             // 0 계수 처리
+#[test] fn dwt_norms()                    // DWT getnorm 테이블 검증
+#[test] fn mct_norms()                    // MCT getnorm 테이블 검증
 ```
 
 ---
@@ -646,11 +660,11 @@ Phase 0 (types, error, stream)
 | 2 | 2.1 | mqc_states | ✅ |
 | 2 | 2.2 | mqc_enc | ✅ |
 | 2 | 2.3 | mqc_dec | ✅ |
-| 3 | 3.1 | t1_ctx | ⬜ |
-| 3 | 3.2 | t1 | ⬜ |
-| 4 | 4.1 | dwt_1d | ⬜ |
-| 4 | 4.2 | dwt_2d | ⬜ |
-| 5 | 5.1 | mct | ⬜ |
+| 3 | 3.1 | t1_ctx | ✅ |
+| 3 | 3.2 | t1 | ✅ |
+| 4 | 4.1 | dwt_1d | ✅ |
+| 4 | 4.2 | dwt_2d | ✅ |
+| 5 | 5.1 | mct | ✅ |
 | 6 | 6.1 | quantize | ⬜ |
 | 7 | 7.1 | pi | ⬜ |
 | 7 | 7.2 | t2 | ⬜ |
