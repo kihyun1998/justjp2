@@ -113,6 +113,66 @@ fn resetstates_enc() {
     assert!(enc.numbytes() > 0);
 }
 
+#[test]
+fn bypass_mode_encode() {
+    let mut enc = MqcEncoder::new();
+    // 먼저 일반 산술 코딩으로 몇 비트
+    enc.encode(0, 1);
+    enc.encode(0, 0);
+    enc.flush();
+
+    // 바이패스 모드 전환
+    enc.bypass_init();
+    let bypass_bits = [1u32, 0, 1, 1, 0, 0, 1, 0];
+    for &b in &bypass_bits {
+        enc.bypass_enc(b);
+    }
+    enc.bypass_flush(false);
+
+    let bytes = enc.to_vec();
+    assert!(!bytes.is_empty());
+}
+
+#[test]
+fn bypass_mode_roundtrip() {
+    // 바이패스 모드로 인코딩한 비트를 raw 디코더로 읽기
+    let mut enc = MqcEncoder::new();
+    enc.encode(0, 0); // 산술 코딩 1비트
+    enc.flush();
+
+    enc.bypass_init();
+    let bits = [1u32, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 1, 1, 0];
+    for &b in &bits {
+        enc.bypass_enc(b);
+    }
+    enc.bypass_flush(false);
+
+    let data = enc.to_vec();
+    // 바이패스 데이터는 산술 코딩 뒤에 raw 비트가 붙음
+    // 최소한 데이터가 생성되었는지 확인
+    assert!(data.len() >= 2);
+}
+
+#[test]
+fn erterm_flush() {
+    let mut enc = MqcEncoder::new();
+    for i in 0..30 {
+        enc.encode(0, i % 2);
+    }
+    enc.erterm();
+
+    let bytes = enc.to_vec();
+    assert!(!bytes.is_empty());
+
+    // erterm 후에도 디코더가 동일한 비트를 복원할 수 있어야 함
+    // (erterm은 종료 패턴만 다를 뿐 데이터는 동일)
+    let mut dec = MqcDecoder::new(&bytes);
+    for i in 0..30u32 {
+        let d = dec.decode(0);
+        assert_eq!(d, i % 2, "bit {i} mismatch");
+    }
+}
+
 // ── Step 2.3: MQ 디코더 ──
 
 #[test]

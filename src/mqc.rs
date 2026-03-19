@@ -182,10 +182,86 @@ impl MqcEncoder {
         self.ctxs[ctxno].state = state;
     }
 
-    /// 세그먼트 마커 인코딩 (0, 1, 0, 1 패턴)
+    /// 세그먼트 마커 인코딩 (1, 0, 1, 0 패턴)
     pub fn segmark(&mut self) {
         for i in 1..5u32 {
             self.encode(18, i % 2);
+        }
+    }
+
+    /// 바이패스(raw) 모드 초기화
+    /// flush() 후에 호출해야 한다.
+    pub fn bypass_init(&mut self) {
+        self.c = 0;
+        self.ct = 8;
+    }
+
+    /// 바이패스 모드에서 비트 인코딩 (산술 코딩 없이 직접 비트 쓰기)
+    pub fn bypass_enc(&mut self, d: u32) {
+        self.ct -= 1;
+        self.c += (d & 1) << self.ct;
+        if self.ct == 0 {
+            self.bp += 1;
+            self.ensure_buf_size();
+            self.buf[self.bp] = self.c as u8;
+            self.ct = if self.buf[self.bp] == 0xFF { 7 } else { 8 };
+            self.c = 0;
+        }
+    }
+
+    /// 바이패스 모드 플러시
+    pub fn bypass_flush(&mut self, erterm: bool) {
+        if self.ct < 7 || (self.ct == 7 && (erterm || self.buf[self.bp] != 0xFF)) {
+            // 남은 비트를 교차 패턴(0,1,0,1...)으로 채우기
+            let mut bit_value = 0u32;
+            while self.ct > 0 {
+                self.ct -= 1;
+                self.c += bit_value << self.ct;
+                bit_value = 1 - bit_value;
+            }
+            self.bp += 1;
+            self.ensure_buf_size();
+            self.buf[self.bp] = self.c as u8;
+        } else if self.ct == 7 && self.buf[self.bp] == 0xFF {
+            // 마지막 0xFF 제거
+            debug_assert!(!erterm);
+            self.bp -= 1;
+        } else if self.ct == 8
+            && !erterm
+            && self.bp >= 2
+            && self.buf[self.bp] == 0x7F
+            && self.buf[self.bp - 1] == 0xFF
+        {
+            // 0xFF 0x7F 최적화 제거
+            self.bp -= 2;
+        }
+        // bp 전진 (numbytes 계산용)
+        self.bp += 1;
+    }
+
+    /// 에러 종료 모드 (ERTERM) — 비트스트림에 명확한 종료 패턴 삽입
+    pub fn erterm(&mut self) {
+        let mut k = 11i32 - self.ct as i32 + 1;
+        while k > 0 {
+            self.c <<= self.ct;
+            self.ct = 0;
+            self.byteout();
+            k -= self.ct as i32;
+        }
+        if self.buf[self.bp] != 0xFF {
+            self.byteout();
+        }
+    }
+
+    /// 재시작 초기화 (RESTART 모드용)
+    /// flush() 후 새 산술 코딩 세그먼트를 시작한다.
+    pub fn restart_init(&mut self) {
+        self.a = 0x8000;
+        self.c = 0;
+        self.ct = 12;
+        self.bp -= 1;
+        if self.buf[self.bp] == 0xFF {
+            self.ct = 13;
         }
     }
 
