@@ -1,0 +1,3 @@
+[submodule "vendor/openjpeg"]
+	path = vendor/openjpeg
+	url = https://github.com/uclouvain/openjpeg.git
