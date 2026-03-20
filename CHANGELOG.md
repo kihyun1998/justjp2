@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-03-20
+
+### Changed
+
+- Switch license to dual MIT OR Apache-2.0
+- Set MSRV (minimum supported Rust version) to 1.80
+
+### Added
+
+- GitHub Actions CI (check, test, fmt, clippy across Linux/Windows/macOS)
+
 ## [0.1.0] - 2026-03-19
 
 ### Added
@@ -28,4 +39,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **SIMD-friendly batch operations**: RCT/ICT and DWT predict/update
 - **Compatibility**: Verified header parsing of openjpeg-generated files
 
+[0.1.1]: https://github.com/kihyun1998/justjp2/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/kihyun1998/justjp2/releases/tag/v0.1.0

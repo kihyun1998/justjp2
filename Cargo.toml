@@ -1,6 +1,6 @@
 [package]
 name = "justjp2"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["Ki Hyun Park <justkihyun1998@gmail.com>"]
 description = "Pure Rust JPEG 2000 (JP2/J2K) encoder and decoder"
